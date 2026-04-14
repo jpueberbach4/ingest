@@ -40,6 +40,9 @@
         /* Hover Value Panel */
         #hover-value-panel { position: absolute; top: 15px; left: 15px; background: rgba(30, 33, 41, 0.9); border: 1px solid var(--accent); color: #fff; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 13px; z-index: 60; display: none; pointer-events: none; }
 
+        /* Regime/Forward Label Overlay */
+        #context-overlay { position: absolute; top: 15px; right: 15px; background: rgba(30, 33, 41, 0.9); border: 1px solid #ffcc00; color: #fff; padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 13px; z-index: 60; display: none; pointer-events: none; text-align: right; }
+
         #playback-bar { position: absolute; bottom: 0; left: 0; right: 0; height: 60px; background: rgba(14,17,23,0.9); border-top: 1px solid var(--border); display: flex; align-items: center; padding: 0 20px; gap: 15px; z-index: 100; }
         input[type=range] { flex-grow: 1; accent-color: var(--accent); cursor: pointer; }
         #play-btn { width: 100px; }
@@ -88,6 +91,17 @@
         <ul id="indicator-list"></ul>
     </div>
 
+    <hr style="border-color: #333; margin: 10px 0;">
+
+    <div class="control-group">
+        <label>SURFACE OVERLAY (CONTEXT)</label>
+        <select id="sel-color-mode">
+            <option value="structure">Structure (Depth)</option>
+            <option value="regime">K-Means Regimes (K=4)</option>
+            <option value="forward">Forward Returns (20 candles)</option>
+        </select>
+    </div>
+
     <button id="btn-fetch" class="primary">FETCH & COMPILE TENSORS</button>
 </div>
 
@@ -99,6 +113,7 @@
         <div id="manifold-chart"></div>
         <div id="camera-overlay"></div>
         <div id="hover-value-panel"></div> 
+        <div id="context-overlay"></div>
     </div>
     
     <div id="playback-bar">
@@ -125,6 +140,10 @@
     let gData = []; 
     let normData = {}; 
     
+    let regimeLabels = [];
+    let forwardReturns = [];
+    const FWD_N = 20;
+
     let isPlaying = false;
     let lastAnimTime = 0;
     const LOOKBACK = 240; 
@@ -152,8 +171,56 @@
         playBtn: document.getElementById('play-btn'),
         wrapper: document.getElementById('manifold-wrapper'),
         overlay: document.getElementById('camera-overlay'),
-        hoverValuePanel: document.getElementById('hover-value-panel')
+        hoverValuePanel: document.getElementById('hover-value-panel'),
+        colorMode: document.getElementById('sel-color-mode'),
+        contextOverlay: document.getElementById('context-overlay')
     };
+
+    function runKMeans(data, k, maxIter=20) {
+        if(data.length === 0) return [];
+        let centroids = [];
+        let labels = new Array(data.length).fill(0);
+        
+        for(let i=0; i<k; i++) {
+            centroids.push([...data[Math.floor(Math.random() * data.length)]]);
+        }
+
+        for(let iter=0; iter<maxIter; iter++) {
+            let changed = false;
+            let clusterSums = Array.from({length: k}, () => new Array(data[0].length).fill(0));
+            let clusterCounts = new Array(k).fill(0);
+
+            for(let i=0; i<data.length; i++) {
+                let point = data[i];
+                let minDist = Infinity;
+                let bestK = 0;
+                for(let j=0; j<k; j++) {
+                    let dist = 0;
+                    for(let d=0; d<point.length; d++) {
+                        dist += (point[d] - centroids[j][d]) ** 2;
+                    }
+                    if(dist < minDist) { minDist = dist; bestK = j; }
+                }
+                if(labels[i] !== bestK) changed = true;
+                labels[i] = bestK;
+
+                for(let d=0; d<point.length; d++) {
+                    clusterSums[bestK][d] += point[d];
+                }
+                clusterCounts[bestK]++;
+            }
+
+            for(let j=0; j<k; j++) {
+                if(clusterCounts[j] > 0) {
+                    for(let d=0; d<centroids[j].length; d++) {
+                        centroids[j][d] = clusterSums[j][d] / clusterCounts[j];
+                    }
+                }
+            }
+            if(!changed) break;
+        }
+        return labels;
+    }
 
     async function init() {
         setupDragAndDrop();
@@ -366,6 +433,10 @@
         DOM.slider.addEventListener('input', (e) => renderFrame(parseInt(e.target.value), false)); 
         DOM.playBtn.addEventListener('click', togglePlay);
         
+        DOM.colorMode.addEventListener('change', () => {
+            if(gData.length > 0) renderFrame(parseInt(DOM.slider.value), false);
+        });
+
         window.addEventListener('keydown', (e) => {
             if (["Space", "ArrowUp", "ArrowDown", "PageUp", "PageDown"].includes(e.code)) e.preventDefault();
             let current = parseInt(DOM.slider.value), next = current;
@@ -485,6 +556,7 @@
     function compileManifold() {
         if (gData.length === 0 || activeTracks.length === 0) return;
 
+        // 1. Normalize Tracks
         activeTracks.forEach(track => {
             let rawVals = gData.map(d => {
                 let v = d.indicators[track];
@@ -492,6 +564,27 @@
             });
             normData[track] = normalizeVector(rawVals);
         });
+
+        let tensor = [];
+        for(let i=0; i<gData.length; i++) {
+            tensor.push(activeTracks.map(t => normData[t][i]));
+        }
+        regimeLabels = runKMeans(tensor, 4);
+
+        forwardReturns = [];
+        let maxRet = 0;
+        for(let i=0; i<gData.length; i++) {
+            if(i + FWD_N < gData.length) {
+                let ret = (gData[i+FWD_N].close - gData[i].close) / gData[i].close;
+                forwardReturns.push(ret);
+                if(Math.abs(ret) > maxRet) maxRet = Math.abs(ret);
+            } else {
+                forwardReturns.push(0);
+            }
+        }
+        if(maxRet > 0) {
+            forwardReturns = forwardReturns.map(r => r / maxRet);
+        }
 
         initCharts();
         
@@ -565,13 +658,40 @@
         
         let staticYAxis = windowData.map((_, i) => i - (LOOKBACK/2));
         
+        let colorMode = DOM.colorMode.value;
         let zMatrix = [];
+        let surfaceColorMatrix = [];
+
         for (let i = startIdx; i <= idx; i++) {
             let row = [];
             activeTracks.forEach(track => {
                 row.push(normData[track][i]);
             });
             zMatrix.push(row);
+
+            if (colorMode === 'regime') {
+                let r = regimeLabels[i];
+                let cVal = (r / 3) * 2 - 1; 
+                surfaceColorMatrix.push(activeTracks.map(() => cVal));
+            } else if (colorMode === 'forward') {
+                let r = forwardReturns[i];
+                surfaceColorMatrix.push(activeTracks.map(() => r));
+            } else {
+                surfaceColorMatrix.push(row); // default depth
+            }
+        }
+
+        let focusIdx = idx - Math.floor(LOOKBACK / 2);
+        if (colorMode === 'regime') {
+            DOM.contextOverlay.innerHTML = `<strong>K-Means State</strong><br/>Regime: <span style="color:var(--accent)">Cluster ${regimeLabels[focusIdx]}</span>`;
+            DOM.contextOverlay.style.display = 'block';
+        } else if (colorMode === 'forward') {
+            let pct = (forwardReturns[focusIdx] * 100).toFixed(2);
+            let c = forwardReturns[focusIdx] >= 0 ? '#00ff96' : '#ff4b4b';
+            DOM.contextOverlay.innerHTML = `<strong>Forward Return (${FWD_N}d)</strong><br/>Outcome: <span style="color:${c}">${pct}%</span>`;
+            DOM.contextOverlay.style.display = 'block';
+        } else {
+            DOM.contextOverlay.style.display = 'none';
         }
 
         let localMin = Infinity, localMax = -Infinity;
@@ -614,8 +734,17 @@
 
         let traces = [];
 
+        let activeScale = [[0, 'rgb(255, 75, 75)'], [0.5, 'rgb(30, 33, 41)'], [1, 'rgb(0, 255, 150)']];
+        if(colorMode === 'regime') {
+            activeScale = [[0, '#3b82f6'], [0.33, '#eab308'], [0.66, '#a855f7'], [1, '#ec4899']];
+        }
+
         if (activeTracks.length > 1) {
-            traces.push({ x: trackIndices, y: staticYAxis, z: zMatrix, type: 'surface', colorscale: [[0, 'rgb(255, 75, 75)'], [0.5, 'rgb(30, 33, 41)'], [1, 'rgb(0, 255, 150)']], opacity: 0.8, showscale: false, cmin: -1, cmax: 1 });
+            traces.push({ 
+                x: trackIndices, y: staticYAxis, z: zMatrix, 
+                surfacecolor: surfaceColorMatrix,
+                type: 'surface', colorscale: activeScale, opacity: 0.8, showscale: false, cmin: -1, cmax: 1 
+            });
         } else if (activeTracks.length === 1) {
             traces.push({ x: windowData.map(() => trackIndices[0]), y: staticYAxis, z: windowData.map((d, i) => normData[activeTracks[0]][startIdx + i]), type: 'scatter3d', mode: 'lines', line: { color: '#00ff96', width: 4 }, showlegend: false });
         }
@@ -661,7 +790,6 @@
                 showlegend: false
             });
 
-            let focusIdx = idx - Math.floor(LOOKBACK / 2);
             let val = gData[focusIdx].indicators[hoveredTrack];
             let displayVal = (val !== undefined && val !== null) ? Number.parseFloat(val).toFixed(4) : "N/A";
             
@@ -692,7 +820,7 @@
         
         Plotly.react(gd, traces, window.manifoldLayout);
         
-        let midTime = gData[idx - Math.floor(LOOKBACK/2)].time;
+        let midTime = gData[focusIdx].time;
         Plotly.relayout('price-chart', { 'shapes': [{ type: 'line', x0: midTime, x1: midTime, y0: 0, y1: 1, yref: 'paper', line: { color: 'cyan', width: 1.5, dash: 'dash' } }] });
     }
 
