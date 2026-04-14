@@ -18,11 +18,7 @@ Any modern laptop having NVMe will do. Storage requirements are about 1 GB per c
 \
 The code-base is small and heavily documented. This is a high-performance system. One of the project's goals is to "checkout" how far performance can be pushed with a developer-friendly language like Python. Every part of the system is regularly profiled to identify performance bottlenecks. \
 \
-Note: This is not a click-and-go or “magical” project. It’s intended for data preparation to support downstream analysis, such as machine learning. You can use it to test and design indicators or to extract inter-asset features for ML workflows—that’s how I use it. While indicator-integrated data can be extracted, that is not the primary purpose of this project. You will need to know Python if you want to use this project efficiently. \
-\
-I will be adding (more) examples for integration with other Python projects, Excel, Jupyter notebooks and Ensemble-learning (ML) while I am developing this project. This project is not even close to "finished". There is still a lot of work to do. \
-\
-One more thing: there has been a discussion to take the project private and continue advanced features in a private setting. Some users may have read this a little while ago. This is off-the-table. Development will continue to be public.
+Note: This is not a click-and-go or “magical” project. It’s intended for data preparation to support downstream analysis, such as machine learning. You can use it to test and design indicators or to extract inter-asset features for ML workflows—that’s how I use it. While indicator-integrated data can be extracted, that is not the primary purpose of this project. You will need to know Python if you want to use this project efficiently. 
 
 Example chart:
 
@@ -168,7 +164,6 @@ It will show you your localized data.
 
 ## Terms of Use
 
-### Data Source & Attribution
 - Data originates from Dukascopy Bank SA ([www.dukascopy.com](https://live-login.dukascopy.com/rto3/))
 - You must respect [Dukascopy's Terms of Service](https://www.dukascopy.com/swiss/english/legal-pages/terms-of-use/)
 
