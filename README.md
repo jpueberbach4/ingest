@@ -1,4 +1,4 @@
-# bp.markets.ingest
+# Ingest
 
 This repository implements the ingestion pipeline for marketdata
 
