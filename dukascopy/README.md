@@ -26,7 +26,7 @@ Example chart:
 
 Example manifold studio (visualizer for deep-learning purposes):
 
-![Example Studio](images/studio.png)
+![Example Studio](images/example.gif)
 
 >http://localhost:8000/studio.html
 
