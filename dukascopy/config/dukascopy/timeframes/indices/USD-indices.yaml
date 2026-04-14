@@ -1,0 +1,70 @@
+# Instrument-Specific Timeframe Resampling Configuration
+#
+# This section defines custom resampling rules for individual instruments.
+# It overrides or extends the default resampling behavior by specifying how
+# higher timeframes (e.g. 4H) are constructed from lower source timeframes
+# (e.g. 1H) on a per-symbol basis.
+#
+# For each instrument:
+#   - timeframes lists the target timeframes to generate.
+#   - rule defines the resampling interval (pandas-style, e.g. "4H").
+#   - source specifies the base timeframe used for aggregation.
+#   - origin sets the alignment anchor (exchange/session-specific start time).
+#   - label and closed control candle labeling and boundary inclusion.
+#
+# This is primarily used for instruments with non-standard session starts
+# (e.g. bonds), ensuring correct candle alignment and consistent historical
+# aggregation.
+#
+# Please note that the ORIGIN field is set to the candle alignment as if it were winter in Europe.
+#
+# ---
+#
+# Multiple indices in this file
+# 
+# USA30.IDX-USD (DJIA). The Dow Jones Industrial Average has 2 main trading sessions.
+# USA500.IDX-USD (S&P 500). The U.S. index has 2 main trading sessions.
+# USATECH.IDX-USD (NASDAQ). The U.S. tech index has 2 main trading sessions.
+# ...
+# 
+# Trading sessions:
+#
+# - Day Session: 9:30 AM - 4:00 PM (EST/EDT) **
+# - After-Hours Session: 4:00 PM - 9:30 AM the next morning (EST/EDT) **
+# 
+CHI.IDX-USD:
+  timezone: Asia/Shanghai
+  skip_timeframes: []
+  sessions:
+    morning:
+      ranges:
+        open:
+          from: "00:00"
+          to: "23:59"
+      timeframes:
+        4h:
+          origin: "03:00"
+USA30.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+USA500.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+USATECH.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+USSC2000.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+DOLLAR.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "03:00"
+VOL.IDX-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"

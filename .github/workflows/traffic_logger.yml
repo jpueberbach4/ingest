@@ -1,0 +1,107 @@
+name: "Daily Traffic Logger"
+
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.TRAFFIC_ACTION_TOKEN }}
+          fetch-depth: 0
+
+      - name: Fetch Traffic Data
+        uses: sangonzal/repository-traffic-action@v.0.1.6
+        env:
+          TRAFFIC_ACTION_TOKEN: ${{ secrets.TRAFFIC_ACTION_TOKEN }}
+
+      - name: Fix Permissions
+        run: |
+          sudo chown -R $USER:$USER .
+          sudo chmod -R 777 traffic/ || true
+
+      - name: Pivot to Stats Branch and Merge
+        run: |
+          mkdir -p /tmp/traffic_payload
+          cp -r traffic/* /tmp/traffic_payload/
+          
+          git fetch origin stats
+          git checkout stats || git checkout -b stats origin/stats
+          
+          mkdir -p traffic
+          cp -r /tmp/traffic_payload/* traffic/
+          mkdir -p .github/traffic
+          
+          cat << 'EOF' > merge_stats.py
+          import csv
+          import os
+
+          def merge_csv(name):
+              new_path = f'traffic/{name}.csv'
+              old_path = f'.github/traffic/{name}.csv'
+              if not os.path.exists(new_path): return
+              
+              data = {}
+              fieldnames = []
+              def get_id_col(reader):
+                  return reader.fieldnames[0] if reader.fieldnames else None
+
+              if os.path.exists(old_path) and os.path.getsize(old_path) > 0:
+                  with open(old_path, 'r', newline='') as f:
+                      reader = csv.DictReader(f)
+                      id_col = get_id_col(reader)
+                      if id_col:
+                          fieldnames = reader.fieldnames
+                          for row in reader:
+                              if row.get(id_col):
+                                  data[row[id_col]] = row
+              
+              with open(new_path, 'r', newline='') as f:
+                  reader = csv.DictReader(f)
+                  id_col = get_id_col(reader)
+                  if id_col:
+                      fieldnames = reader.fieldnames 
+                      for row in reader:
+                          if row.get(id_col):
+                              data[row[id_col]] = row
+              
+              if not data or not fieldnames: return
+              id_col = fieldnames[0]
+              sorted_keys = sorted(data.keys())
+              with open(old_path, 'w', newline='') as f:
+                  writer = csv.DictWriter(f, fieldnames=fieldnames)
+                  writer.writeheader()
+                  for k in sorted_keys:
+                      writer.writerow(data[k])
+
+          merge_csv('clones')
+          merge_csv('views')
+          EOF
+          
+          python3 merge_stats.py
+          cp -f traffic/*.png .github/traffic/ 2>/dev/null || true
+          
+          rm -rf traffic merge_stats.py
+
+      - name: Commit and Push to Stats Branch
+        uses: Endbug/add-and-commit@v9
+        with:
+          author_name: "GitHub Action"
+          author_email: "action@github.com"
+          message: "Update stats and plots [skip ci]"
+          add: |
+            .github/traffic/*.csv
+            .github/traffic/*.png
+          branch: stats
+          pull: '--rebase --autostash -X theirs'
+          push: true

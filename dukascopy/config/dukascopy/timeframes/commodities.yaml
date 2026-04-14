@@ -1,0 +1,102 @@
+# Instrument-Specific Timeframe Resampling Configuration
+#
+# This section defines custom resampling rules for individual instruments.
+# It overrides or extends the default resampling behavior by specifying how
+# higher timeframes (e.g. 4H) are constructed from lower source timeframes
+# (e.g. 1H) on a per-symbol basis.
+#
+# For each instrument:
+#   - timeframes lists the target timeframes to generate.
+#   - rule defines the resampling interval (pandas-style, e.g. "4H").
+#   - source specifies the base timeframe used for aggregation.
+#   - origin sets the alignment anchor (exchange/session-specific start time).
+#   - label and closed control candle labeling and boundary inclusion.
+#
+# This is primarily used for instruments with non-standard session starts
+# (e.g. bonds), ensuring correct candle alignment and consistent historical
+# aggregation.
+#
+# Please note that the ORIGIN field is set to the candle alignment as if it were winter in Europe.
+#
+# ---
+#
+BRENT.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "03:00"
+COPPER.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+COTTON.CMD-USX:
+  timeframes:
+    4h:                     
+      origin: "04:00"
+DIESEL.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "03:00"
+GAS.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+LIGHT.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+OJUICE.CMD-USX:
+  timeframes:
+    4h:                     
+      origin: "15:00"
+SOYBEAN.CMD-USX:
+  timezone: America/Chicago
+  sessions:
+    day-session:
+      ranges:
+        open:
+          from: "08:30"
+          to: "13:20"
+      timeframes:
+        5m:
+          origin: "16:31"
+        15m:
+          origin: "16:31"
+        30m:
+          origin: "16:31"
+        1h:
+          origin: "16:31"
+        4h:
+          origin: "16:31"
+    overnight:
+      ranges:
+        evening:
+          from: "19:00"
+          to: "23:59"
+        night:
+          from: "00:00"
+          to: "07:00"
+      timeframes:
+        4h:
+          origin: "04:00"
+    # This is to prevent OUT_OF_MARKET errors for W1
+    catch-all:
+      ranges: 
+        24h:
+          from: "00:00"
+          to: "23:59"
+XAG-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+XAU-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+XPD.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"
+XPT.CMD-USD:
+  timeframes:
+    4h:                     
+      origin: "01:00"

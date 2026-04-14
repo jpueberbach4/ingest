@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Trading Interface - Charts</title>
+    <script src="scripts/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="/style/generic.css"/>
+    <link rel="stylesheet" href="/style/dark.css"/>
+</head>
+<body>
+    <header>
+        <h2 style="margin:0; font-size: 18px;">Interactive Stream</h2>
+        <button id="calendarBtn" style="background: var(--accent-blue); color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 500;">📅 Jump to Date</button>
+        <button id="themeToggle" style="background: #313339; color: white; border: 1px solid #444; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: 500; margin-left: 10px;">🌙 Dark Mode</button>
+        <div style="display: flex; align-items: center; gap: 8px; margin-left: 15px;">
+            <div id="status-indicator" style="font-size: 11px; opacity: 0.8;">Initialising...</div>
+            <div style="width: 1px; height: 12px; background: #555; opacity: 0.5;"></div> <div id="drift-indicator" style="font-size: 11px; font-weight: bold; min-width: 50px;">Drift: --</div>
+        </div>
+    </header>
+
+    <div class="main-container">
+        <div class="sidebar">
+            <div class="control-group">
+                <label onclick="copyToClipboard(document.getElementById('symbolSelect').value)" style="cursor: pointer; text-decoration: underline dotted;" 
+                    title="Click to copy current symbol to clipboard"
+                    id="symbolLabel"
+                >SYMBOL</label>
+                <select id="symbolSelect" onchange="updateTimeframeOptions(); resetAndLoad(true);"></select>
+            </div>
+            <div class="control-group">
+                <label>Interval</label>
+                <select id="tfSelect" onchange="resetAndLoad(true)"></select>
+            </div>
+
+            <hr style="border:0; border-top:1px solid #eee; margin: 15px 0;">
+
+            <div class="control-group">
+                <label>INDICATOR</label>
+                
+                <div class="custom-select-wrapper" id="indicatorWrapper">
+                    <div class="custom-select-trigger" id="indicatorTrigger">
+                        <span id="indicatorDisplay">LOADING...</span>
+                        <div class="arrow">▼</div>
+                    </div>
+                    
+                    <div class="custom-options" id="indicatorList"></div>
+                </div>
+
+                <input type="hidden" id="indicatorSelect" value="">
+                <div id="params" class="param-box"></div>
+                <button class="add-btn" onclick="addToChain()">+ Add to Chart</button>
+            </div>
+
+            <div class="control-group">
+                <label>Active Indicators</label>
+                <div id="chain-list"></div>
+            </div>
+
+            <button onclick="resetAndLoad(false)" style="margin-top:auto; background: var(--accent-blue); color:white; border:none; padding:10px; border-radius:4px; font-weight:600; cursor:pointer;">Update View</button>
+
+            <button onclick="openExportModal()" style="margin-top:10px; background: #313339; color:white; border:none; padding:10px; border-radius:4px; font-weight:600; cursor:pointer; width:100%;">Export View</button>
+
+            <button onclick="copyUrl()" style="margin-top:10px; background: #313339; color:white; border:none; padding:10px; border-radius:4px; font-weight:600; cursor:pointer; width:100%;">Copy URL</button>
+
+            <button onclick="copyApiCall()" style="margin-top:10px; background: #313339; color:white; border:none; padding:10px; border-radius:4px; font-weight:600; cursor:pointer; width:100%;">Copy API</button>
+
+            <div class="sidebar-footer">
+                <div id="short_message"></div>
+                <a href="https://www.dukascopy.com" target="_blank" class="attribution">
+                    Market data by <strong>Dukascopy</strong>
+                </a>
+            </div>
+        </div>
+
+        <div id="content-wrapper">
+            <div id="loader"><div class="spinner"></div></div>
+            <div id="chart-legend"></div>
+            <div id="main-chart-container"></div>
+            <div id="panel-container"></div>
+        </div>
+    </div>
+
+    <div id="export-modal">
+        <div class="modal-content">
+            <h3>Export Settings</h3>
+            <div class="export-field">
+                <label>Start Date (After)</label>
+                <input type="text" id="export-after" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="export-field">
+                <label>Total Records (Limit, max. 1,000,000)</label>
+                <input type="number" id="export-limit" value="1000">
+            </div>
+            <div class="export-field">
+                <label>Order</label>
+                <select id="export-order">
+                    <option value="asc">Ascending</option>
+                    <option value="desc">Descending</option>
+                </select>
+            </div>
+            <div class="export-checkboxes">
+                <label><input type="checkbox" id="export-mt4"> MT4 CSV</label>
+                <label><input type="checkbox" id="export-skiplast"> SkipLast</label>
+            </div>
+            <div style="display: flex; justify-content: space-between;">
+                <button class="cancel-btn" onclick="document.getElementById('export-modal').style.display='none'">Cancel</button>
+                <button class="exec-btn" onclick="runExport()">Download</button>
+                <button class="copy-btn" onclick="runExportUrl()">Share CSV</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="calendarModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
+        <div style="background: var(--white); width: 320px; border-radius: 8px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5);">
+            <div style="background: var(--sidebar-dark); color: white; padding: 15px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0; font-size: 16px;">Jump to Date</h3>
+                <span id="closeModal" style="cursor: pointer; font-size: 20px;">&times;</span>
+            </div>
+            <div style="padding: 20px;">
+                <label style="display: block; color: var(--text-gray); font-size: 12px; margin-bottom: 8px;">SELECT DATE</label>
+                <input type="date" id="calendarInput" style="width: 100%; padding: 10px; border: 1px solid var(--border-color); border-radius: 4px; font-family: inherit; margin-bottom: 20px; box-sizing: border-box;">
+                <button id="calendarOk" style="width: 100%; background: var(--accent-blue); color: white; border: none; padding: 12px; border-radius: 4px; font-weight: bold; cursor: pointer;">OK</button>
+            </div>
+        </div>
+    </div>
+    <script src="scripts/interface.js" type="text/javascript"></script>
+    <script src="scripts/listeners.js" type="text/javascript"></script>
+    <script src="scripts/callbacks.js" type="text/javascript"></script>
+    <script src="scripts/util.js" type="text/javascript"></script>
+    <script src="scripts/monitor.js" type="text/javascript"></script>
+    <script src="scripts/custom.js" type="text/javascript"></script><!-- override script for users -->
+</body>
+</html>

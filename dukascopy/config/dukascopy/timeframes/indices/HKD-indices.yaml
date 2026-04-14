@@ -1,0 +1,99 @@
+# Instrument-Specific Timeframe Resampling Configuration
+#
+# This section defines custom resampling rules for individual instruments.
+# It overrides or extends the default resampling behavior by specifying how
+# higher timeframes (e.g. 4H) are constructed from lower source timeframes
+# (e.g. 1H) on a per-symbol basis.
+#
+# For each instrument:
+#   - timeframes lists the target timeframes to generate.
+#   - rule defines the resampling interval (pandas-style, e.g. "4H").
+#   - source specifies the base timeframe used for aggregation.
+#   - origin sets the alignment anchor (exchange/session-specific start time).
+#   - label and closed control candle labeling and boundary inclusion.
+#
+# This is primarily used for instruments with non-standard session starts
+# (e.g. bonds), ensuring correct candle alignment and consistent historical
+# aggregation.
+#
+# Please note that the ORIGIN field is set to the candle alignment as if it were winter in Europe.
+#
+# ---
+#
+# HKG.IDX-HKD (HSI). The Hongkong index has 3 trading sessions (for futures and derivatives). 
+# 
+# - Morning Session: 9:15 AM - 12:00 PM (HKT)
+# - Afternoon Session: 1:00 PM - 4:30 PM (HKT)
+# - After-Hours Trading (AHT): 5:15 PM - 3:00 AM next day (HKT)
+# - Lunch Break: 12:00 PM - 1:00 PM (1 hour)
+#
+# >>This one is OK from 2023-03-01 to now<< (not further checked atm)
+HKG.IDX-HKD:
+  timezone: Asia/Hong_Kong
+  skip_timeframes: []
+  sessions:
+    morning:
+      from_date: "2020-02-06 21:15:00" # In Asia/Hong_Kong time
+      ranges:
+        open:
+          from: "09:15"
+          to: "12:00"
+      timeframes:
+        15m:
+          origin: "03:15"
+        30m:
+          origin: "03:15"
+        1h:
+          origin: "03:15"
+        4h:
+          origin: "03:15"
+    afternoon:
+      from_date: "2020-02-06 21:15:00" # In Asia/Hong_Kong time
+      ranges:
+        reopen:
+          from: "13:00"
+          to: "16:30"
+      timeframes:
+        15m:
+          origin: "07:00"
+        30m:
+          origin: "07:00"
+        1h:
+          origin: "07:00"
+        4h:
+          origin: "07:00"
+    after-hours:
+      from_date: "2020-02-06 21:15:00" # In Asia/Hong_Kong time
+      ranges:
+        evening:
+          from: "17:15"
+          to: "23:59"
+        night:
+          from: "00:00"
+          to: "03:00"
+      timeframes:
+        15m:
+          origin: "11:15"
+        30m:
+          origin: "11:15"
+        1h:
+          origin: "11:15"
+        4h:
+          origin: "11:15"
+    # candle alignment policy change
+    # before that, just normal epoch origins
+    ancient:
+      to_date: "2020-02-06 21:14:59" # In Asia/Hong_Kong time
+      ranges: 
+        24h:
+          from: "00:00"
+          to: "23:59"
+    # This is to prevent OUT_OF_MARKET errors for W1
+    # We could drop the above ancient one, but we leave it in for clearness
+    # In the future we will need to check for a better approach
+    catch-all:
+      ranges: 
+        24h:
+          from: "00:00"
+          to: "23:59"
+

@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+===============================================================================
+ File:        run.py
+ Author:      JP Ueberbach
+ Created:     2026-01-02
+ Description: FastAPI application entrypoint for OHLCV API.
+
+              This module defines the FastAPI application that exposes
+              OHLCV (Open, High, Low, Close, Volume) time-series data
+              endpoints. It includes:
+
+              - Application setup and lifecycle management
+              - Router inclusion for versioned OHLCV API endpoints
+              - Health-check and root endpoints
+              - Uvicorn-based server startup configuration
+
+              Responsibilities:
+
+              - Manage application lifespan with resource optimization hooks
+              - Register routes for OHLCV data access
+              - Provide health-check endpoints for monitoring
+              - Configure Uvicorn server with uvloop and httptools
+
+ Requirements:
+     - Python 3.8+
+     - FastAPI
+     - Uvicorn with uvloop and httptools
+
+ License:
+     MIT License
+===============================================================================
+"""
+from fastapi import FastAPI, HTTPException, status
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
+from contextlib import asynccontextmanager
+from typing import List
+from pathlib import Path
+import uvicorn
+import multiprocessing
+
+# Function to get config
+def get_config():
+    from config.app_config import load_app_config
+    config_file = 'config.user.yaml' if Path('config.user.yaml').exists() else 'config.yaml'
+    app_config = load_app_config(config_file)
+    return app_config.http
+
+# Import versioned OHLCV routes
+from api.v1_1.routes import router as ohlcv_router_v1_1
+
+# This is the current main version
+from api.v1_1.version import API_VERSION
+
+# Lifespan context manager for startup/shutdown hooks
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage application startup and shutdown lifecycle events."""
+    print("Server starting: Optimizing resources...")
+    yield  # Application is running
+    print("Server shutting down...")
+
+# Initialize FastAPI application
+app = FastAPI(
+    title="OHLC API - FastAPI",
+    version=API_VERSION,
+    lifespan=lifespan
+)
+
+# GZIP compression support
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Include the OHLCV API router v1.1
+app.include_router(ohlcv_router_v1_1)
+
+
+# Health-check endpoint for monitoring or load balancers
+@app.get("/healthz", status_code=200)
+async def health_check():
+    """Return a simple online status for health-check purposes."""
+    return {"status": "online"}
+
+# This we need to do outside of the main routine because of the StaticFiles below
+config = get_config()
+
+# Resolve the absolute path for docs directory
+docs_path = Path(config.docs).resolve()
+if not docs_path.exists():
+    print(f"ERROR: Docs directory not found at {docs_path}") 
+
+# Root endpoint for html files
+app.mount("/", StaticFiles(directory=docs_path, html=True), name="docs")
+
+# Entrypoint for running the FastAPI app with Uvicorn
+if __name__ == "__main__":
+    ip, port = config.listen.split(':', 1)
+
+    should_reload = bool(config.reload)
+
+    # Determine worker count
+    if should_reload:
+        # Uvicorn does not support multiple workers with reload enabled
+        workers = 1
+        print("Dev Mode: 'reload' is enabled. Forcing workers=1.")
+    else:
+        # Production Mode: Use configured workers OR default to CPU count
+        workers = getattr(config, 'workers', multiprocessing.cpu_count())
+        print(f"Production Mode: Spawning {workers} worker processes.")
+
+    uvicorn.run(
+        "run:app",                  
+        host=ip,                    
+        port=int(port),             
+        loop="uvloop",              
+        http="httptools",           
+        reload=should_reload,       
+        workers=workers
+    )

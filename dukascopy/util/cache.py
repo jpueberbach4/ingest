@@ -1,0 +1,352 @@
+"""
+===============================================================================
+File:        cache.py
+
+Author:      JP Ueberbach
+Created:     2026-01-12
+Updated:     2026-01-23
+
+In-memory cache and view manager for OHLCV market data backed by
+memory-mapped binary files.
+
+This module provides fast, zero-copy access to time-series OHLCV data
+stored in fixed-width binary files. It manages the lifecycle of
+memory-mapped views keyed by symbol and timeframe, supports efficient
+timestamp-based lookups via binary search, and exposes utilities for
+extracting contiguous data slices as normalized Pandas DataFrames.
+
+The primary entry point is the `MarketDataCache` class, which integrates
+with the dataset discovery layer and indicator registry to dynamically
+register views at runtime based on resolved query options.
+
+Key capabilities:
+    - Maintain a registry of memory-mapped OHLCV views by symbol/timeframe.
+    - Register and refresh views from binary OHLCV files using NumPy
+      structured arrays.
+    - Detect file changes and safely replace stale memory maps.
+    - Perform fast timestamp lookups using `np.searchsorted`.
+    - Extract contiguous OHLCV slices as Pandas DataFrames.
+    - Lazily register views on demand via dataset discovery.
+    - Share memory-mapped files across queries for efficient reuse.
+
+Design notes:
+    - Binary files are assumed to use a fixed 64-byte record layout.
+    - Data access is read-only and optimized for random access.
+    - Memory maps are reused when file size and modification time
+      are unchanged.
+    - Timestamp indices are stored as NumPy arrays for efficient search.
+    - Indicator execution is handled externally; this module provides
+      only the underlying OHLCV data views.
+
+Classes:
+    MarketDataCache:
+        Core cache manager responsible for view registration, memory-map
+        lifecycle management, record indexing, and data extraction.
+
+Module-level objects:
+    cache (MarketDataCache):
+        Singleton cache instance used by downstream query and API layers.
+
+Requirements:
+    - Python 3.8+
+    - NumPy
+    - Pandas
+    - mmap (standard library)
+
+License:
+    MIT License
+===============================================================================
+"""
+import numpy as np
+import pandas as pd
+import polars as pl
+import pyarrow as pa
+import os
+import sys
+import mmap
+import threading
+from typing import Dict
+from numpy.lib.stride_tricks import as_strided
+from util.helper import *
+from util.registry import *
+from util.indicator import *
+
+# Define the C-struct equivalent for numpy
+DTYPE = np.dtype([
+    ('ts', '<u8'),           # Timestamp in milliseconds
+    ('ohlcv', '<f8', (5,)),  # Open, High, Low, Close, Volume
+    ('padding', '<u8', (2,)) # Padding to 64 bytes
+])
+
+RECORD_SIZE = 64
+
+class MarketDataCache:
+    # Singleton instance
+    _instance = None
+
+    def __new__(cls, *args, **kwargs):
+        # Singleton handling, we only want one global instance of this class
+        if not cls._instance:
+            # If we dont have an instance yet
+            cls._instance = super(MarketDataCache, cls).__new__(cls)
+            # Set initialized to true
+            cls._instance._initialized = False
+
+        # Return the singleton instance
+        return cls._instance
+
+    def __init__(self):
+        # If we are already initialized, return
+        if self._initialized:
+            return
+        
+        # Setup the memory-maps
+        self.mmaps = {}
+        # Discover datasets and build registry
+        self.registry = DatasetRegistry(discover_all())
+        # Discover indicators and build registry
+        self.indicators = IndicatorRegistry()
+        # Set initialized to true
+        self._initialized = True
+        # Setup lock (thread-safety)
+        self._lock = threading.RLock()
+
+    def discover_view(self, symbol, tf):
+        """Discover and register a dataset view for a symbol and timeframe.
+
+        This method looks up a dataset matching the given symbol and timeframe
+        from the registry and registers a view backed by the dataset's file
+        path. If no matching dataset exists, an exception is raised.
+
+        Args:
+            symbol (str): Trading symbol identifier (e.g., "EURUSD").
+            tf (str): Timeframe identifier (e.g., "5m", "1h").
+
+        Raises:
+            Exception: If no dataset is found for the given symbol and timeframe.
+        """
+        with self._lock:
+            # Look up the dataset matching the symbol and timeframe
+            dataset = self.registry.find(symbol, tf)
+
+            # Fail fast if no dataset is available
+            if not dataset:
+                raise Exception(f"No dataset found for symbol {symbol}/{tf}")
+
+            # Register a view using the dataset's file path
+            self._register_view(symbol, tf, dataset.path)
+
+
+    def _register_view(self, symbol, tf, file_path):
+        """Register or update a memory-mapped OHLCV view for a given symbol and timeframe.
+
+        This method maps the binary OHLCV file into memory using `mmap` and
+        stores metadata and structured data in the internal `mmaps` cache.
+        If the file has not changed since the last registration (same size
+        and modification time), the view is left unchanged. Otherwise, the
+        existing memory-mapped view is replaced.
+
+        Args:
+            symbol (str): Trading symbol identifier (e.g., "EURUSD").
+            tf (str): Timeframe identifier (e.g., "1m", "5m").
+            file_path (str): Path to the OHLCV binary file to register.
+
+        Returns:
+            None
+        """
+        with self._lock:
+            # Construct a unique view name based on symbol and timeframe
+            view_name = f"{symbol}_{tf}"
+
+            # Get the file size and modification time
+            size = os.path.getsize(file_path)
+            mtime = os.stat(file_path).st_mtime
+
+            # Estimate number of records assuming 64 bytes per record
+            num_records = size // 64
+
+            # Check if a cached view already exists
+            cached = self.mmaps.get(view_name)
+
+            # If the cached view exists and file has not changed, do nothing
+            if cached and size == cached['size'] and mtime == cached['mtime']:
+                return
+
+            # Reuse the file object if cached, otherwise open the file
+            f = cached['f'] if cached else open(file_path, "rb")
+            
+            # Memory-map the file for fast access
+            new_mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            new_mm.madvise(mmap.MADV_RANDOM)  # Optimize for random access
+
+            # Interpret the memory-mapped bytes as a structured NumPy array
+            data_view = np.frombuffer(new_mm, dtype=DTYPE)
+
+            # Clean up old cached view if present
+            if cached:
+                cached['data'] = None
+                cached['ts_index'] = None 
+                cached['mm'].close()
+
+            # Register the new memory-mapped view in the internal cache
+            self.mmaps[view_name] = {
+                'f': f, 
+                'mm': new_mm, 
+                'ts_index': data_view['ts'], 
+                'data': data_view,
+                'size': size, 
+                'mtime': mtime, 
+                'num_records': num_records,
+                'file_path': file_path
+            }
+
+
+    def get_chunk(self, symbol, tf, from_idx, to_idx, return_polars=False):
+        """
+        Retrieve a slice of OHLCV data for a given symbol and timeframe.
+
+        The data is read from a memory-mapped store and returned as either
+        a Polars DataFrame (fast path) or a Pandas DataFrame (slow path).
+
+        Args:
+            symbol (str): Trading symbol (e.g. "BTCUSDT").
+            tf (str): Timeframe identifier (e.g. "1m", "5m").
+            from_idx (int): Starting index (inclusive) of the data slice.
+            to_idx (int): Ending index (exclusive) of the data slice.
+            return_polars (bool): If True, return a Polars DataFrame.
+                If False, return a Pandas DataFrame.
+
+        Returns:
+            pl.DataFrame | pd.DataFrame:
+                A DataFrame containing OHLCV data plus metadata columns.
+                Returns an empty DataFrame if no cached data exists.
+        """
+        with self._lock:
+            # Build the lookup key used to access the memory-mapped data
+            view_name = f"{symbol}_{tf}"
+
+            # Try to fetch cached data for this symbol + timeframe
+            cached = self.mmaps.get(view_name)
+
+            # If nothing is cached, return an empty DataFrame of the requested type
+            if not cached:
+                return pl.DataFrame() if return_polars else pd.DataFrame()
+
+            # Slice the underlying structured NumPy array by index range
+            subset = cached['data'][from_idx:to_idx]
+
+            # Extract OHLCV data (shape: N x 5)
+            data_points = subset['ohlcv']
+
+            # Column names corresponding to OHLCV values
+            columns = ['open', 'high', 'low', 'close', 'volume']
+
+            # Fast path: construct a Polars DataFrame
+            if return_polars:
+                # Raw OHLCV NumPy array
+                ohlcv_raw = subset['ohlcv']
+
+                # Ensure memory is contiguous for faster zero-copy conversion
+                ohlcv_contiguous = np.ascontiguousarray(ohlcv_raw)
+
+                # Create Polars DataFrame directly from NumPy array
+                plf = pl.from_numpy(
+                    ohlcv_contiguous,
+                    schema=['open', 'high', 'low', 'close', 'volume']
+                )
+
+                # Add metadata columns (timestamp, symbol, timeframe)
+                plf = plf.with_columns([
+                    pl.Series("time_ms", subset['ts'], dtype=pl.UInt64),
+                    pl.lit(symbol).alias("symbol"),
+                    pl.lit(tf).alias("timeframe")
+                ])
+
+                # Return Polars DataFrame (check later - unit test compliance)
+                return plf.select([
+                    "symbol", "timeframe", "time_ms", 
+                    "open", "high", "low", "close", "volume"
+                ])
+
+            # Slow path: construct a Pandas DataFrame
+            pdf = pd.DataFrame(subset['ohlcv'], columns=columns)
+
+            # Add metadata columns directly for minimal overhead
+            pdf['time_ms'] = subset['ts']
+            pdf['symbol'] = symbol
+            pdf['timeframe'] = tf
+
+            # Return Pandas DataFrame (check later - unit test compliance)
+            return pdf[['symbol', 'timeframe', 'time_ms', 'open', 'high', 'low', 'close', 'volume']]
+
+
+    def get_record_count(self, symbol, tf):
+        """Return the number of timestamped records available in a cached view.
+
+        This method looks up the memory-mapped cache for the current view and
+        returns the total number of indexed timestamps available for lookup
+        and retrieval.
+
+        Returns:
+            int: Total number of records in the cache.
+        """
+        with self._lock:
+            # Construct the cache view name from symbol and timeframe
+            view_name = f"{symbol}_{tf}"
+            
+            # Retrieve the cached view from the memory-mapped storage
+            cached = self.mmaps.get(view_name)
+
+            # Return the number of timestamp entries in the index
+            return len(cached['ts_index'])
+
+
+    def find_record(self, symbol, tf, target_ts, side="right"):
+        """Find the index of a record closest to a target timestamp.
+
+        This method performs a binary search over the cached timestamp index
+        using NumPy's optimized ``searchsorted`` implementation. The lookup
+        returns the insertion position of ``target_ts`` based on the specified
+        search side, enabling efficient range queries on time-ordered data.
+
+        Args:
+            symbol (str): Trading symbol identifier (e.g., "EURUSD").
+            tf (str): Timeframe identifier (e.g., "1m", "5m").
+            target_ts (int): Target timestamp in epoch milliseconds.
+            side (str, optional): Search direction passed to ``np.searchsorted``.
+                Use "right" to return the insertion point after existing entries,
+                or "left" to return the insertion point before. Defaults to "right".
+
+        Returns:
+            int | None: Index position of the matching or insertion record if
+            found, otherwise ``None``.
+        """
+        with self._lock:
+            # Construct the cache view name from symbol and timeframe
+            view_name = f"{symbol}_{tf}"
+
+            # Retrieve the cached data for this view
+            cached = self.mmaps.get(view_name)
+
+            # Cast to numpy uint64 to avoid re-entry to GIL on each search
+            search_key = np.uint64(target_ts)
+
+            # Perform a binary search on the sorted timestamp index
+            idx = np.searchsorted(cached['ts_index'], search_key, side=side)
+
+            # Ensure the index is valid before returning
+            if idx >= 0:
+                return idx
+
+            return None
+
+    def to_arrow_table(self, symbol, tf, from_idx, to_idx):
+        with self._lock:
+            view = self.mmaps[f"{symbol}_{tf}"]['data'][from_idx:to_idx]
+            ts_arr = pa.array(view['ts'])
+            ohlcv_raw = view['ohlcv']
+            arrays = [ts_arr] + [pa.array(ohlcv_raw[:, i]) for i in range(5)]
+            names = ['ts', 'open', 'high', 'low', 'close', 'volume']
+            return pa.Table.from_arrays(arrays, names=names)
+
+

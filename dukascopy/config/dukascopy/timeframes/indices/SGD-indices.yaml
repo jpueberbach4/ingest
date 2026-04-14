@@ -1,0 +1,119 @@
+# Instrument-Specific Timeframe Resampling Configuration
+#
+# This section defines custom resampling rules for individual instruments.
+# It overrides or extends the default resampling behavior by specifying how
+# higher timeframes (e.g. 4H) are constructed from lower source timeframes
+# (e.g. 1H) on a per-symbol basis.
+#
+# For each instrument:
+#   - timeframes lists the target timeframes to generate.
+#   - rule defines the resampling interval (pandas-style, e.g. "4H").
+#   - source specifies the base timeframe used for aggregation.
+#   - origin sets the alignment anchor (exchange/session-specific start time).
+#   - label and closed control candle labeling and boundary inclusion.
+#
+# This is primarily used for instruments with non-standard session starts
+# (e.g. bonds), ensuring correct candle alignment and consistent historical
+# aggregation.
+#
+# Please note that the ORIGIN field is set to the candle alignment as if it were winter in Europe.
+#
+# ---
+#
+# SGX.IDX-SGD (STI). The Singapore index trading sessions for futures.
+# 
+# - Morning Session: 08:30 AM - 12:00 PM (SGT)
+# - Afternoon Session: 1:00 PM - 5:20 PM (SGT)
+# - After-Hours Trading (T+1): 5:50 PM - 5:15 AM next day (SGT)
+# - Lunch Break: 12:00 PM - 1:00 PM (1 hour)
+#
+# Note: The 'origin' fields align with the start of each specific session 
+# to ensure candle consistency within that trading window.
+# 
+# This is a metatrader-quirk
+#
+# Summer-time (Europe):
+# - MT4 Shows a 11:30 4H candle AND a 12:51 4H candle, DOES have 16:51 4H candle
+# Winter-time (Europe)
+# - MT4 Shows a 10:30 4H candle AND NO! 11:51 4H candle, DOES have 15:51 candle
+#
+# (a full span of a 4H candle in summer is not the reason, same is on winter)
+#
+# I don't understand the behavior of this quirk, i mean, why leave it intact
+# in summer and merge it in winter?
+# 
+# Anyhow. We support that behavior (see post step)
+#
+# Furthermore. There is a alignment policy change happening in the weekend of 2022-08-07
+# From HH:30 4H candles to session-based 4H candles, see below.
+# Because it's happing during a weekend rollover, no ghostcandles to be solved.
+#  
+SGD.IDX-SGD:
+  timezone: Asia/Singapore
+  skip_timeframes: []
+  timeframes:
+    4h:
+      post:
+        # a bugs-bunny
+        merge-step:
+          action: merge
+          ends_with:
+          - "11:51:00"
+          offset: -1
+  sessions:
+    morning:
+      from_date: "2022-08-07 00:00:00" # In Asia/Singapore time
+      ranges:
+        open:
+          from: "08:30"
+          to: "17:20"
+      timeframes:
+        5m:
+          origin: "02:30"
+        15m:
+          origin: "02:30"
+        30m:
+          origin: "02:30"
+        1h:
+          origin: "02:30"
+        4h:
+          origin: "02:30"
+    after-hours:
+      from_date: "2022-08-07 00:00:00" # In Asia/Singapore time
+      ranges:
+        evening:
+          from: "17:50"
+          to: "23:59"
+        night:
+          from: "00:00"
+          to: "05:15"
+      timeframes:
+        5m:
+          origin: "15:51"
+        15m:
+          origin: "15:51"
+        30m:
+          origin: "15:51"
+        1h:
+          origin: "15:51"
+        4h:
+          origin: "15:51"
+    ancient:
+      # different candle
+      to_date: "2022-08-06 23:59:59" # In Asia/Singapore time
+      ranges:
+        day:
+          from: "00:00"
+          to: "23:59"
+      timeframes:
+        1h:
+          origin: "02:30"
+        4h:
+          origin: "02:30"
+    # This is to prevent OUT_OF_MARKET errors for W1
+    # In the future we will need to check for a better approach
+    catch-all:
+      ranges: 
+        24h:
+          from: "00:00"
+          to: "23:59"

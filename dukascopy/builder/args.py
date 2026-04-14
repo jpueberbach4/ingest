@@ -1,0 +1,289 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+===============================================================================
+ File:        args.py
+ Author:      JP Ueberbach
+ Created:     2025-12-13
+ Description: Command-line argument parsing for Dukascopy batch extraction 
+              utility.
+
+              Provides:
+              - parse_args: Parse and validate CLI options for extraction, 
+                listing, and export.
+
+              Features:
+              - Select symbols/timeframes with optional modifiers
+              - List available datasets
+              - Filter by date range
+              - Configure output type, partitioning, compression, and MT4 export
+              - Supports dry-run mode for testing
+
+ Requirements:
+     - Python 3.8+
+
+ License:
+     MIT License
+===============================================================================
+"""
+import argparse
+import sys
+import uuid
+import textwrap
+from datetime import datetime
+from config.app_config import BuilderConfig 
+from helper import CustomArgumentParser, print_available_datasets
+
+from util.dataclass import *
+from util.discovery import *
+from util.resolver import *
+
+
+# Default date range for extraction
+DEFAULT_AFTER = "1970-01-01 00:00:00"
+DEFAULT_UNTIL = "3000-01-01 00:00:00"
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+def generate_examples() -> str:
+    return textwrap.dedent("""
+    Supported modifiers (optional):
+
+      # Normalize gaps and Panama-adjust a symbol
+      SYMBOL:panama
+
+      # Skip last candle from a timeframe
+      TF:skiplast
+
+    Examples:
+
+      # List all available symbols
+      build-csv.sh --list
+
+      # Extract raw 1m and 1h data for BRENT as a single .csv file
+      build-csv.sh --select BRENT.CMD.USD/1m,1h --output brent_data.csv
+
+      # Extract Panama-adjusted 1m data for BRENT as a single .Parquet file
+      build-parquet.sh --select BRENT.CMD.USD:panama/1m --output panama_data.parquet
+
+      # Extract raw 1m, 1h and 4h data for BRENT and exclude the last candle of 1h and 4h to .csv file
+      build-csv.sh --select BRENT.CMD.USD/1m,1h:skiplast,4h:skiplast --output brent_data.csv
+
+      # Select multiple symbols and multiple timeframes to .Parquet hive
+      build-parquet.sh --select EUR-USD/1m,1h,4h --select DOLLAR.IDX-USD/1h --output_dir temp/export --partition
+
+      # Extract raw 1m data for BRENT and EUR-USD and export it to mt4 .csv format
+      build-csv.sh --select BRENT.CMD-USD/1m --select EUR-USD/1m --output brent_data.csv --mt4
+
+      # Extract raw 1m data for EUR-USD for the month of December 2025 to .csv file
+      build-csv.sh --select EUR-USD/1m --after "2025-12-01 00:00:00" --until "2026-01-01 00:00:00"  --output limit.csv
+
+      # Extract Panama-adjusted 1h and 4h for BRENT and skiplast on all timeframes
+      build-csv.sh --select BRENT.CMD-USD:panama:skiplast/1h,4h --output panama_test.csv
+
+      # Perform a dry-run to verify file discovery
+      build-csv.sh --select EUR-USD/1h --dry-run --output test.csv
+    """)
+
+def parse_args(config: BuilderConfig):
+    """
+    Parse and validate command-line arguments for Dukascopy extraction.
+
+    Parameters:
+    -----------
+    config : BuilderConfig
+        Configuration object containing data paths and other settings.
+
+    Returns:
+    --------
+    dict
+        Dictionary of validated options.
+    """
+
+    parser = CustomArgumentParser(
+        description="Batch extraction utility for symbol/timeframe datasets.",
+        formatter_class=argparse.RawTextHelpFormatter,
+        epilog = generate_examples(),
+    )
+
+    # Mutually exclusive group: select datasets or list available
+    command_group = parser.add_mutually_exclusive_group(required=True)
+    command_group.add_argument(
+        "--select",
+        action="append",
+        metavar="SYMBOL:modifier/TF1,TF2:modifier,...",
+        help="Defines how symbols and timeframes are selected for extraction.\n\n"
+    )
+    command_group.add_argument(
+        "--list",
+        action="store_true",
+        help="Dump out all available symbol/timeframe pairs and exit.",
+    )
+
+    # Date range filters
+    parser.add_argument(
+        "--after", 
+        type=str, 
+        default=DEFAULT_AFTER,
+        help=f"Start date/time (inclusive). Format: YYYY-MM-DD HH:MM:SS (Default: {DEFAULT_AFTER})"
+    )
+    parser.add_argument(
+        "--until", 
+        type=str, 
+        default=DEFAULT_UNTIL,
+        help=f"End date/time (exclusive). Format: YYYY-MM-DD HH:MM:SS (Default: {DEFAULT_UNTIL})"
+    )
+
+    # Output configuration
+    output_group = parser.add_argument_group("Output Configuration (Required for Extraction Mode)")
+    output_group.add_argument(
+        "--output", 
+        type=str, 
+        metavar="FILE_PATH",
+        help="Write a single merged output file."
+    )
+    output_group.add_argument(
+        "--output_dir", 
+        type=str, 
+        metavar="DIR_PATH",
+        help="Write a partitioned dataset."
+    )
+
+    # Mutually exclusive output type
+    type_group = parser.add_mutually_exclusive_group()
+    type_group.add_argument(
+        "--csv", 
+        action="store_const", 
+        const="csv", 
+        dest="output_type",
+        help="Write as CSV."
+    )
+    type_group.add_argument(
+        "--parquet", 
+        action="store_const", 
+        const="parquet", 
+        dest="output_type",
+        help="Write as Parquet (default)."
+    )
+
+    # Compression options
+    parser.add_argument(
+        "--compression",
+        type=str,
+        default="zstd",
+        choices=["snappy", "gzip", "brotli", "zstd", "lz4", "none"],
+        help="Compression codec for Parquet output.",
+    )
+
+    # Other flags
+    parser.add_argument(
+        "--mt4", 
+        action="store_true",
+        help="Splits merged CSV into files compatible with MT4."
+    )
+    parser.add_argument(
+        "--force", 
+        action="store_true",
+        help="Allow patterns that match no files."
+    )
+    parser.add_argument(
+        "--dry-run", 
+        action="store_true",
+        help="Parse/resolve arguments only; do not run extraction."
+    )
+    parser.add_argument(
+        "--partition", 
+        action="store_true",
+        help="Enable Hive-style partitioned output (requires --output_dir)."
+    )
+    parser.add_argument(
+        "--keep-temp", 
+        action="store_true",
+        help="Retain intermediate files."
+    )
+
+    # Parse CLI arguments
+    args = parser.parse_args()
+
+    # Validate date format
+    try:
+        dt_after = datetime.strptime(args.after, DATE_FORMAT) if args.after else None
+        dt_until = datetime.strptime(args.until, DATE_FORMAT) if args.until else None
+    except ValueError:
+        parser.error(f"Invalid date format. Expected: {DATE_FORMAT}")
+
+    if dt_after and dt_until and dt_after >= dt_until:
+        parser.error("--after must be strictly earlier than --until")
+
+    # Default output type
+    args.output_type = args.output_type or "parquet"
+
+    # Validate compression based on output type
+    compression_choices = {
+        "parquet": ["snappy", "gzip", "brotli", "zstd", "lz4", "none", "uncompressed"],
+        "csv": ["none", "uncompressed", "gzip", "zstd"],
+    }
+    if args.compression not in compression_choices.get(args.output_type, ["none"]):
+        parser.error(
+            f"Compression '{args.compression}' is not suitable for output type '{args.output_type}'. "
+            f"Valid options are: {', '.join(compression_choices.get(args.output_type, ['none']))}"
+        )
+
+    # Validate required output options for extraction mode
+    if args.select and not (args.output or args.output_dir):
+        parser.error("--select requires --output_dir or --output")
+
+    if args.partition and not args.output_dir:
+        parser.error("--partition requires --output_dir")
+
+    if args.output_dir and not args.partition:
+        parser.error("--output_dir requires --partition")
+
+    if args.partition and args.mt4:
+        parser.error("--mt4 incompatible with --partition")
+
+    if args.output_type == "parquet" and args.mt4:
+        parser.error("--parquet incompatible with --mt4")
+
+
+    # Initialize discovery
+    discovery = DataDiscovery(config)
+    available = discovery.scan()
+    resolver = SelectionResolver(available)
+
+    # List available symbols and timeframes
+    if args.list:
+        print_available_datasets(available)
+        sys.exit(0)
+
+    # Resolve selections
+    try:
+        resolver = SelectionResolver(available)
+        final_selections, _ = resolver.resolve(args.select)
+    except Exception as e:
+        parser.error(e)
+
+    # Normalize compression for CSV or 'none'
+    if args.compression == "none" or args.output_type == "csv":
+        args.compression = "uncompressed"
+
+    # Generate temp directory if not partitioned
+    if not args.partition:
+        # Using config.paths.temp
+        args.output_dir = f"{config.paths.temp}/{args.output_type}/{uuid.uuid4()}/temp"
+
+    # Return dictionary of validated options
+    return {
+        "select_data": sorted(final_selections),
+        "partition": args.partition,
+        "output_dir": args.output_dir,
+        "output_type": args.output_type,
+        "dry_run": args.dry_run,
+        "force": args.force,
+        "keep_temp": args.keep_temp,
+        "after": args.after,
+        "until": args.until,
+        "output": args.output,
+        "compression": args.compression,
+        "fmode": config.fmode,
+        "mt4": args.mt4,
+    }
