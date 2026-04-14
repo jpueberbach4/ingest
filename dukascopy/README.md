@@ -4,15 +4,13 @@ Python 3.9+
 
 ## What Is This Tool Used For?
 
-BP-Markets is a high-performance, local-first data bridge built for indie traders. Unlike cloud-based solutions, it is optimized for zero-latency local execution, allowing your trading terminal and data API to run side by side without resource contention. \
+Ingest is a high-performance, local-first data bridge built for indie traders. Unlike cloud-based solutions, it is optimized for zero-latency local execution, allowing your trading terminal and data API to run side by side without resource contention. \
 \
 The system incrementally updates market data, resampling completed 1-minute candles into a set of default higher timeframes that can be customized globally or per symbol. It also tracks open higher-timeframe candles, which can optionally be excluded through modifiers. \
 \
 Data can be queried or constructed directly from a WSL2 terminal or via an HTTP API service. Designed by a trader, for traders, BP-Markets focuses on performance, accuracy, and workflow efficiency. Future releases will introduce high-performance backtesting capabilities that fully eliminate lookahead bias. \
 \
 The tool features a customizable, advanced (hybrid) indicator engine and uses an internal API to query data across assets and timeframes, including access to indicator values from other instruments. Indicators can be expressed as Polars-expressions or implemented on Pandas dataframes directly. \
-\
-It also features an experimental Neuro-evolution engine to build ML models for sparse event detection. Example for macro-driven bottom-sniping included. This is a research-item on how to use ML for hunting an alpha-edge. \
 \
 Any modern laptop having NVMe will do. Storage requirements are about 1 GB per configured symbol. \
 \
@@ -71,7 +69,7 @@ git clone https://github.com/jpueberbach4/ingest.git
 cd ingest/dukascopy
 ```
 
-Make sure python version is 3.8+. 
+Make sure python version is 3.9+. 
 
 ```sh
 python3 --version
@@ -172,14 +170,6 @@ It will show you your localized data.
 ## License
 
 This software is licensed under the MIT License.
-
-Copyright JP Ueberbach, 2026
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
