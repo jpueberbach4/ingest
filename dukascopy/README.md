@@ -30,6 +30,8 @@ Example manifold studio (visualizer for deep-learning purposes):
 
 >http://localhost:8000/studio.html
 
+(Studio will get updated with latent space analysis. Studio is part of the research on timely trendshift detection using Hmoe. It is in final testing phase. Will not only look great but also be very useful)
+
 Historical market data can be leveraged in multiple ways to enhance analysis, decision-making, and trading performance:
 
 - **Backtesting** → Evaluate and refine trading strategies by simulating them on past market conditions. This helps determine whether a strategy is robust, profitable, and resilient across different market environments.
